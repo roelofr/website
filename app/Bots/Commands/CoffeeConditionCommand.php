@@ -55,8 +55,8 @@ class CoffeeConditionCommand extends Command
         $service = App::make(CoffeeConditionService::class);
 
         // Check message
-        $secondWordInMessage = (string) Str::of($this->getCommandBody())->words(1, '')->trim()->lower();
-        if (empty($secondWordInMessage)) {
+        $secondWordInMessage = Str::of($this->getMessageBody())->words(1, '')->trim()->lower();
+        if ($secondWordInMessage->isEmpty()) {
             $condition = $service->getCoffeeCondition();
 
             $this->replyWithMessage(['text' => $condition]);

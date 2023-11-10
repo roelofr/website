@@ -4,12 +4,16 @@ declare(strict_types=1);
 
 namespace App\Bots\Commands;
 
+use App\Enums\Models\BotQuoteType;
 use App\Models\BotQuote;
-use Illuminate\Support\Facades\Cache;
+use App\Models\User;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
+use InvalidArgumentException;
+use RuntimeException;
 use Telegram\Bot\Actions;
 use Telegram\Bot\Keyboard\Keyboard;
+use Telegram\Bot\Objects\Message;
 
 /**
  * @codeCoverageIgnore
@@ -36,21 +40,29 @@ class QuoteCommand extends Command
     Log in via /login om deze beperking weg te halen.
     MSG;
 
-    private const REPLY_OK = <<<'MSG'
+    private const REPLY_FAILED = <<<'MSG'
+    Oops, er is iets fout gegaan bij het opslaan 😬
+    MSG;
+
+    private const REPLY_QUOTE_OK = <<<'MSG'
+    <quote>%s</quote>
+
+    Hebben we, je uitspraak is opgeslagen!
+    MSG;
+
+    private const REPLY_FACT_OK = <<<'MSG'
     Je wist-je-datje is opgeslagen.
 
-    Je hebt het volgende ingestuurd:
-    %s
+    <quote><b>Wist je dat...</b> %s</quote>
     MSG;
 
     private const REPLY_PUBLIC = <<<'MSG'
-    Wil je je wist-je-datjes voortaan in het geheim insturen?
-    Stuur ze dan als DM naar de bot 😉
+    🤫 Stil houden? Stuur je zooi via een DM.
     MSG;
 
     private const REPLY_GUEST = <<<'MSG'
-    Je bent niet ingelogd, dus je kan maximaal 1 wist-je-datje per
-    dag insturen. Login via /login om deze limiet te verwijderen.
+    Je bent niet ingelogd en mag maar beperkt wist-je-datjes sturen.
+    Limiet verwijderen? Log even in via /login (in een DM).
     MSG;
 
     /**
@@ -85,20 +97,54 @@ class QuoteCommand extends Command
      */
     protected $pattern = '.+';
 
+    public function buildBotQuote(
+        Message $message,
+        ?User $user,
+    ): BotQuote {
+        /** @var \Telegram\Bot\User */
+        $sender = $message->from;
+
+        if (! $sender) {
+            throw new RuntimeException('This message appears to have no sender!');
+        }
+
+        $pureMessage = $this->getMessageBody($message);
+        if (! $pureMessage) {
+            throw new InvalidArgumentException('Failed to process message!');
+        }
+
+        $messageLines = Str::of($pureMessage)->trim()->split("\n")->filter(fn (string $value) => ! empty(trim($value)));
+        $quoteLines = $messageLines
+            ->filter(fn (string $value) => (bool) preg_match('/^[“"‘\'](.+)[”"’\'](\s?-\s?)([a-z].+)$/i', $value));
+
+        // A quote is a quote if at least 75% of the message looks like a quote
+        $isAQuote = ($quoteLines->count() / $messageLines->count() >= 0.75);
+
+        return BotQuote::create([
+            'user_id' => $user?->id,
+            'message_id' => $message->message_id,
+
+            'quote' => $messageLines->join("\n"),
+            'quote_type' => $isAQuote ? BotQuoteType::QUOTE : BotQuoteType::FACT,
+            'display_name' => trim("{$sender->firstName} {$sender->lastName}") ?: "#{$sender->id}",
+        ]);
+    }
+
     /**
      * Handle the activity.
      */
     public function handle()
     {
-        if ($this->update->message == null) {
+        $message = $this->update->message;
+        if (! $message) {
             return;
         }
 
         // Check the quote, remove the @Username if found
-        $quoteText = $this->getCommandBody();
+        $quoteText = $this->getMessageBody();
 
         //check if quote is unique
-        $messageId = $this->update->message->message_id;
+        $messageId = $message->messageId;
         if (BotQuote::where('message_id', $messageId)->exists()) {
             return;
         }
@@ -139,63 +185,60 @@ class QuoteCommand extends Command
             return;
         }
 
-        $cacheToken = sprintf('tg.quotes.rate-limit.%s', $tgUser->id);
+        // Rate-limit if a guest
+        if (! $user && $this->rateLimit('quotes', self::REPLY_GUEST_THROTTLED, 'PT6H')) {
+            return;
+        }
 
-        // Reject if rate-limited
-        if (! $user && Cache::get($cacheToken) > now()) {
-            $this->replyWithMessage([
-                'text' => $this->formatText(self::REPLY_GUEST_THROTTLED),
+        $model = null;
+
+        try {
+            $model = $this->buildBotQuote($message, $user);
+        } catch (InvalidArgumentException $exception) {
+            Log::warning('Failed to save quote for {message}: {exception}', [
+                'message' => $message,
+                'exception' => $exception,
             ]);
+
+            $this->replyWithMessage(self::REPLY_FAILED);
+            $this->forgetRateLimit('quotes');
 
             return;
         }
 
-        // Build quote
-        $quote = new BotQuote();
-        $quote->quote = $quoteText;
-        $quote->display_name = trim("{$tgUser->firstName} {$tgUser->lastName}") ?: "#{$tgUser->id}";
-        $quote->user_id = optional($user)->id;
-        $quote->message_id = $messageId;
-        $quote->save();
+        // Prep the reply based on the recognized type.
+        $preparedMessage = $this->formatText(
+            $model->quote_type === BotQuoteType::QUOTE ? self::REPLY_QUOTE_OK : self::REPLY_FACT_OK,
+            e($model->quote),
+        );
 
-        $preparedMessage = $this->formatText(self::REPLY_OK, $quoteText);
-
+        // Add a "keep it quiet" group-chat suffix
         if ($this->isInGroupChat()) {
             $preparedMessage .= PHP_EOL . PHP_EOL . self::REPLY_PUBLIC;
         }
 
-        // Send single user message
-        if ($user) {
-            $keyboard = (new Keyboard())->inline();
-            $keyboard->row(
-                Keyboard::inlineButton([
-                    'text' => 'Bekijk mijn wist-je-datjes',
-                    'url' => route('account.quotes'),
-                ]),
-            );
-
-            $this->replyWithMessage([
-                'text' => $preparedMessage,
-                'reply_to_message_id' => $this->getUpdate()->getMessage()->getMessageId(),
-                'reply_markup' => $keyboard,
-            ]);
-
-            return;
-        }
-
-        // Apply rate limit
-        Cache::put($cacheToken, now()->addDay()->setTime(6, 0));
+        // Add a keyboard when logged in
+        $keyboard = $user ? Keyboard::make()->inline()->row(
+            Keyboard::inlineButton([
+                'text' => 'Bekijk mijn wist-je-datjes',
+                'url' => route('account.quotes'),
+            ]),
+        ) : null;
 
         // Send messages
-        $this->replyWithMessage([
+        $this->replyWithMessage(array_filter([
             'text' => $preparedMessage,
-            'reply_to_message_id' => $this->getUpdate()->getMessage()->getMessageId(),
-        ]);
+            'parse_mode' => 'HTML',
+            'reply_to_message_id' => $message->messageId,
+            'reply_markup' => $keyboard,
+        ]));
 
         // Render guest response
-        $this->replyWithMessage([
-            'text' => $this->formatText(self::REPLY_GUEST),
-            'disable_notification' => true,
-        ]);
+        if (! $user) {
+            $this->replyWithMessage([
+                'text' => $this->formatText(self::REPLY_GUEST),
+                'disable_notification' => true,
+            ]);
+        }
     }
 }

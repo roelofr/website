@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Models;
 
+use App\Enums\Models\BotQuoteType;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -22,6 +23,7 @@ use Illuminate\Support\HtmlString;
  * @property null|int $user_id
  * @property string $display_name
  * @property string $quote
+ * @property BotQuoteType $quote_type
  * @property-read HtmlString $formatted_quote
  * @property-read null|\App\Models\User $user
  * @method static \Database\Factories\BotQuoteFactory factory(...$parameters)
@@ -46,6 +48,7 @@ class BotQuote extends Model
      */
     protected $casts = [
         'submitted_at' => 'datetime',
+        'quote_type' => BotQuoteType::class,
     ];
 
     /**
@@ -55,8 +58,10 @@ class BotQuote extends Model
      */
     protected $fillable = [
         'user_id',
-        'display_name',
+        'message_id',
         'quote',
+        'quote_type',
+        'display_name',
     ];
 
     /**
