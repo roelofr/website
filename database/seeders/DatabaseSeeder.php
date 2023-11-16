@@ -26,5 +26,8 @@ class DatabaseSeeder extends Seeder
 
         // Webcams
         $this->call(RequiredCameraSeeder::class);
+
+        // Content
+        $this->call(Content\MailTemplateSeeder::class);
     }
 }

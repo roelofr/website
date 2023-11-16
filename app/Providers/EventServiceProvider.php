@@ -8,7 +8,7 @@ use App\Events\Payments\PaymentPaid;
 use App\Listeners;
 use App\Listeners\AddVerifiedPermission;
 use App\Listeners\CheckConscriboWhenVerified;
-use App\Listeners\EnrollmentStateListener;
+use App\Listeners\EnrollmentStateChangeListener;
 use App\Listeners\MediaUploadListener;
 use App\Models;
 use App\Observers;
@@ -38,7 +38,7 @@ class EventServiceProvider extends ServiceProvider
             AddVerifiedPermission::class,
         ],
         StateChanged::class => [
-            EnrollmentStateListener::class,
+            EnrollmentStateChangeListener::class,
         ],
         PaymentPaid::class => [
             Listeners\Shop\PaymentPaidListener::class,

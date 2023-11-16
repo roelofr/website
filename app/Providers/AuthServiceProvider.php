@@ -61,6 +61,9 @@ class AuthServiceProvider extends ServiceProvider
         Models\GoogleWallet\EventClass::class => Policies\GoogleWallet\EventClassPolicy::class,
         Models\GoogleWallet\EventObject::class => Policies\GoogleWallet\EventObjectPolicy::class,
 
+        // Content
+        Models\Content\MailTemplate::class => Policies\Content\MailTemplatePolicy::class,
+
         // Spatie Permissions (both external and local)
         SpatiePermissionModels\Permission::class => Policies\Permissions\PermissionPolicy::class,
         SpatiePermissionModels\Role::class => Policies\Permissions\RolePolicy::class,
