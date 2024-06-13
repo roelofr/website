@@ -9,14 +9,14 @@ use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\Storage;
 
-class PruneExpiredDataExports extends Command
+class PruneExpiredExportsCommand extends Command
 {
     /**
      * The name and signature of the console command.
      *
      * @var string
      */
-    protected $signature = 'gumbo:avg:prune-exports';
+    protected $signature = 'avg:prune-exports';
 
     /**
      * The console command description.

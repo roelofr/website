@@ -37,4 +37,4 @@ jobs:
       - name: Commit changes
         uses: stefanzweifel/git-auto-commit-action@v4
         with:
-          commit_message: Fixed code style using PHP-CS-Fixer
+          commit_message: 'chore: fixed code style using PHP-CS-Fixer'

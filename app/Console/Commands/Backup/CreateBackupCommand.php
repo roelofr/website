@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace App\Console\Commands;
+namespace App\Console\Commands\Backup;
 
 use App\Enums\BackupType;
 use App\Helpers\Str;
@@ -21,7 +21,7 @@ use Spatie\MediaLibrary\MediaCollections\Models\Media as MediaLibraryMediaModel;
 use Symfony\Component\Console\Output\OutputInterface;
 use Throwable;
 
-class BackupCreateCommand extends Command
+class CreateBackupCommand extends Command
 {
     /**
      * The name and signature of the console command.

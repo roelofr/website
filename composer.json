@@ -5,6 +5,7 @@
     "type": "project",
     "require": {
         "php": "^8.2",
+        "ext-zip": "*",
         "advoor/nova-editor-js": "^3.3",
         "artesaos/seotools": "^1.2",
         "barryvdh/laravel-debugbar": "^3.6",

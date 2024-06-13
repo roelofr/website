@@ -5,12 +5,14 @@ declare(strict_types=1);
 namespace App\Models;
 
 use App\Helpers\Arr;
+use App\Models\Conscribo\ConscriboUser;
 use App\Models\Shop\Order;
 use App\Notifications\VerifyEmail;
 use Illuminate\Auth\MustVerifyEmail;
 use Illuminate\Contracts\Auth\MustVerifyEmail as MustVerifyEmailContract;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\Relation;
 use Illuminate\Database\Eloquent\SoftDeletes;
@@ -30,6 +32,7 @@ use Spatie\Permission\Traits\HasRoles;
  * @property null|\Illuminate\Support\Carbon $deleted_at
  * @property null|string $stripe_id
  * @property null|int $conscribo_id
+ * @property null|int $conscribo_user_id
  * @property null|string $telegram_id
  * @property string $first_name
  * @property null|string $insert
@@ -46,6 +49,7 @@ use Spatie\Permission\Traits\HasRoles;
  * @property null|string $phone
  * @property bool $locked
  * @property-read \App\Models\Activity[]|\Illuminate\Database\Eloquent\Collection $activities
+ * @property-read null|ConscriboUser $conscriboUser
  * @property-read \App\Models\FileDownload[]|\Illuminate\Database\Eloquent\Collection $downloads
  * @property-read \App\Models\Enrollment[]|\Illuminate\Database\Eloquent\Collection $enrollments
  * @property-read \App\Models\FileBundle[]|\Illuminate\Database\Eloquent\Collection $files
@@ -133,6 +137,11 @@ class User extends Authenticatable implements MustVerifyEmailContract
         'email_verified_at' => 'datetime',
         'locked' => 'boolean',
     ];
+
+    public function conscriboUser(): BelongsTo
+    {
+        return $this->belongsTo(ConscriboUser::class);
+    }
 
     /**
      * Returns files the user has uploaded.

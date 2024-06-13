@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace App\Console\Commands\App;
+namespace App\Console\Commands\Backup;
 
 use App\Helpers\Str;
 use App\Models\Activity;
@@ -16,7 +16,7 @@ use SplFileInfo;
 use Symfony\Component\Console\Output\OutputInterface;
 use ZipArchive;
 
-class BackupImages extends Command
+class BackupImagesCommand extends Command
 {
     public const BASE_PATH = 'backup/images/';
 
@@ -25,7 +25,7 @@ class BackupImages extends Command
      *
      * @var string
      */
-    protected $signature = 'app:backup-images';
+    protected $signature = 'backup:images';
 
     /**
      * The console command description.

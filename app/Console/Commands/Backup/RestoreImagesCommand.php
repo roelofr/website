@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace App\Console\Commands\App;
+namespace App\Console\Commands\Backup;
 
 use App\Helpers\Str;
 use App\Models\Activity;
@@ -17,14 +17,14 @@ use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Output\OutputInterface;
 use ZipArchive;
 
-class RestoreImages extends Command
+class RestoreImagesCommand extends Command
 {
     /**
      * The name and signature of the console command.
      *
      * @var string
      */
-    protected $signature = 'app:restore-images {file}';
+    protected $signature = 'backup:restore-images {file}';
 
     /**
      * The console command description.
@@ -45,7 +45,7 @@ class RestoreImages extends Command
         }
 
         // Fetch file
-        $filePath = sprintf('%s/%s', BackupImages::BASE_PATH, $filename);
+        $filePath = sprintf('%s/%s', BackupImagesCommand::BASE_PATH, $filename);
 
         // Log
         $this->line("Restoring from <info>{$filePath}</>...");
@@ -232,7 +232,7 @@ class RestoreImages extends Command
         }
 
         // Get arguments
-        $files = Storage::files(BackupImages::BASE_PATH);
+        $files = Storage::files(BackupImagesCommand::BASE_PATH);
 
         // Only show zip files
         $zipFiles = [];

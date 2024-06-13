@@ -2,6 +2,8 @@
 
 declare(strict_types=1);
 
+use Illuminate\Support\Str;
+
 return [
     /*
     |--------------------------------------------------------------------------
@@ -17,12 +19,17 @@ return [
 
     // Conscribo API
     'conscribo' => [
-        'account' => env('CONSCRIBO_ACCOUNT_NAME'),
+        'url' => env('CONSCRIBO_FORCE_URL'),
+        'account' => env('CONSCRIBO_ACCOUNT', 'test'),
         'username' => env('CONSCRIBO_USERNAME'),
-        'password' => env('CONSCRIBO_PASSPHRASE'),
-        'resources' => [
-            'user' => env('CONSCRIBO_RESOURCE_USERS', 'persoon'),
-            'role' => env('CONSCRIBO_RESOURCE_ROLE', 'commissie'),
+        'password' => env('CONSCRIBO_PASSWORD'),
+
+        'settings' => [
+            'groups_to_download' => Str::of(env('CONSCRIBO_GROUPS_TO_DOWNLOAD', 'lid,a-leden,erelid,oud-lid,begunstiger'))
+                ->lower()
+                ->explode(',')
+                ->map('trim')
+                ->all(),
         ],
     ],
 

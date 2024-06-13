@@ -8,14 +8,14 @@ use App\Jobs\Avg\CreateUserDataExport;
 use App\Models\DataExport;
 use Illuminate\Console\Command;
 
-class UpdateMissedDataExports extends Command
+class CreateExportsCommand extends Command
 {
     /**
      * The name and signature of the console command.
      *
      * @var string
      */
-    protected $signature = 'gumbo:avg:update-exports';
+    protected $signature = 'avg:update-exports';
 
     /**
      * The console command description.

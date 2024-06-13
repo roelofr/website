@@ -9,7 +9,7 @@ use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Date;
 
-class PruneEnrollmentData extends Command
+class PruneEnrollmentDataCommand extends Command
 {
     /**
      * The name and signature of the console command.

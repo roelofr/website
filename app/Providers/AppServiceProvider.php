@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace App\Providers;
 
-use App\Contracts\ConscriboService as ConscriboServiceContract;
 use App\Contracts\EnrollmentServiceContract;
 use App\Contracts\MarkdownServiceContract;
 use App\Contracts\Payments\PaymentManager;
@@ -110,7 +109,7 @@ class AppServiceProvider extends ServiceProvider
     public function register()
     {
         // Conscribo API
-        $this->app->singleton(ConscriboServiceContract::class, static fn () => ConscriboService::fromConfig());
+        $this->app->singleton(ConscriboService::class);
 
         // Markdown
         $this->app->singleton(MarkdownServiceContract::class, MarkdownService::class);

@@ -4,8 +4,7 @@ declare(strict_types=1);
 
 namespace App\Jobs;
 
-use App\Contracts\ConscriboService;
-use App\Helpers\Arr;
+use App\Models\Conscribo\ConscriboUser;
 use App\Models\Role;
 use App\Models\User;
 use Illuminate\Bus\Queueable;
@@ -13,10 +12,9 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
-use RuntimeException;
-use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
 
 /**
  * Updates the user's roles by asking the Conscribo API.
@@ -28,16 +26,30 @@ class UpdateConscriboUserJob implements ShouldQueue
     use Queueable;
     use SerializesModels;
 
-    private const RESERVED_ROLE = [
-        'member',
-        'verified',
-        'restricted',
-    ];
-
     /**
      * The user we're updating.
      */
     protected User $user;
+
+    public static function getRolesForConscriboUser(ConscriboUser $conscriboUser): iterable
+    {
+        $roles = Collection::make();
+
+        $conscriboUser = $conscriboUser->loadMissing([
+            'committees:id,name', 'committees.roles:id,name',
+            'groups:id,name', 'groups.roles:id,name',
+        ]);
+
+        foreach ($conscriboUser->committees as $committee) {
+            $roles->push($committee->roles->pluck('name'));
+        }
+
+        foreach ($conscriboUser->groups as $group) {
+            $roles->push($group->roles->pluck('name'));
+        }
+
+        return $roles->collapse()->sort()->values();
+    }
 
     /**
      * Create a new job instance.
@@ -46,7 +58,6 @@ class UpdateConscriboUserJob implements ShouldQueue
      */
     public function __construct(User $user)
     {
-        //
         $this->user = $user->withoutRelations();
     }
 
@@ -55,7 +66,7 @@ class UpdateConscriboUserJob implements ShouldQueue
      *
      * @return void
      */
-    public function handle(ConscriboService $service)
+    public function handle()
     {
         // Get user
         $user = $this->user;
@@ -67,299 +78,57 @@ class UpdateConscriboUserJob implements ShouldQueue
             return;
         }
 
-        // Get user from Conscribo
-        $accountingUser = $this->getConscriboUser($service, $user);
-
-        if (! $accountingUser) {
-            // Log it
-            Log::notice('No user in Conscribo this e-mail address', [
-                'email' => $user->email,
-            ]);
-
-            // Remove Conscribo-provided data
-            $user->conscribo_id = null;
-            $user->address = null;
-            $user->phone = null;
-
-            // Save it
-            $user->save();
-
-            // End job
-            return;
-        }
-
-        Log::debug('Got user from Conscribo');
-
-        // Previously connected user
-        $preboundUser = User::where([
-            ['conscribo_id', '=', $accountingUser['code']],
-            ['id', '!=', $user->id],
-        ])->first();
-
-        // Update the previous user to remove the occupied Conscribo ID
-        if ($preboundUser) {
-            Log::notice('A user ({preboudUser}) was found with the same Conscribo ID, updating that one before updating {user}.', [
-                'user' => $user->email,
-                'preboundUser' => $preboundUser->email,
-            ]);
-
-            self::dispatchSync($preboundUser);
-        }
-
-        // Start transaction
-        DB::beginTransaction();
-
-        // Update credentials
-        $this->updateUserDetails($user, $accountingUser);
-
-        // Assign member role
-        $this->assignMemberRole($user, $accountingUser);
-
-        // Assign other roles
-        $this->assignRoles($user, $accountingUser);
-
-        // Apply changes
-        DB::commit();
-    }
-
-    /**
-     * Assign the member role.
-     *
-     * @throws InvalidArgumentException
-     */
-    public function assignMemberRole(User $user, array $accountingUser): void
-    {
-        // Check dates
-        $memberStarted = $accountingUser['startdatum_lid'] !== null && $accountingUser['startdatum_lid'] < now();
-        $memberEnded = $accountingUser['einddatum_lid'] !== null && $accountingUser['einddatum_lid'] < now();
-
-        // Check member state
-        $isMember = $memberStarted && ! $memberEnded;
-
-        // Remove member if member without permission
-        if ($isMember !== $user->is_member && ! $isMember) {
-            Log::info('Removing member role from user.', [
-                'user' => $user->email,
-            ]);
-            $user->removeRole('member');
+        // Find the correct user
+        $conscriboUser = ConscriboUser::firstWhere('email', $user->email);
+        if (! $conscriboUser && $user->conscriboUser === null) {
+            Log::info('User {email} not found in Conscribo. Not changed.', ['email' => $user->email]);
 
             return;
         }
 
-        // Add member if not member yet
-        if ($isMember !== $user->is_member && $isMember) {
-            Log::info('Adding member role to user.', [
-                'user' => $user->email,
-            ]);
-            $user->assignRole('member');
+        if (! $conscriboUser && $user->conscriboUser) {
+            DB::transaction(fn () => $this->detachUser($user));
+
+            return;
         }
 
-        // No change
-        Log::info("User's member-state is already up-to-date.", [
-            'user' => $user->email,
-            'checks' => [
-                'is-member' => $isMember,
-                'member-started' => $memberStarted,
-                'member-ended' => $memberEnded,
-            ],
-        ]);
-    }
-
-    /**
-     * Returns user information from Conscribo.
-     */
-    private function getConscriboUser(ConscriboService $service, User $dbUser): ?array
-    {
-        $user = null;
-        $groups = null;
-
-        $query = ['email' => $dbUser->email];
-        if (! empty($dbUser->conscribo_id)) {
-            $query = ['code' => $dbUser->conscribo_id];
-        }
-
-        try {
-            // Get user info from API
-            $user = $service->getResource('user', $query, [
-                'code',
-                'selector',
-
-                // Names
-                'naam',
-                'voornaam',
-                'tussenvoegsel',
-
-                // Contact info
-                'email',
-                'telefoonnummer',
-
-                // Address
-                'straat',
-                'huisnr',
-                'huisnr_toev',
-                'postcode',
-                'plaats',
-
-                // Membership
-                'startdatum_lid',
-                'einddatum_lid',
-            ])->first();
-
-            if (! $user) {
-                return null;
-            }
-
-            // Print result
-            Log::info('Recieved {user} for {query}', [
-                'user' => [
-                    'code' => Arr::get($user, 'code'),
-                    'name' => Arr::get($user, 'name'),
-                ],
-                'query' => $query,
-            ]);
-        } catch (HttpExceptionInterface $exception) {
-            report(new RuntimeException('Failed to get user from API', 0, $exception));
-
-            return null;
-        }
-
-        try {
-            // Get group info from API
-            $groups = $service->getResource('role', [
-                ['leden', '~', $user['selector']],
-            ], ['code', 'naam', 'leden'], ['limit' => 100]);
-
-            // Print result
-            Log::info('Recieved {groups} for user', ['groups' => $groups]);
-        } catch (HttpExceptionInterface $exception) {
-            report(new RuntimeException('Failed to get groups from API', 0, $exception));
-
-            return null;
-        }
-
-        // Return user with groups as element
-        return array_merge($user, [
-            'groups' => $groups->pluck('naam', 'code')->toArray(),
-        ]);
-    }
-
-    /**
-     * Ensure no users exist with this Conscribo ID by clearing any existing
-     * assignments of the ID.
-     *
-     * @param User $user User to skip
-     * @param string $code Conscribo ID to check
-     */
-    private function ensureConscriboIdIsUnique(User $user, string $code): void
-    {
-        User::where([
-            ['id', '!=', $user->id],
-            ['conscribo_id', '=', $code],
-        ])->update([
-            'conscribo_id' => null,
-        ]);
-    }
-
-    private function updateUserDetails(User $user, array $accountingUser): void
-    {
-        $notEmptyGet = static function ($key) use ($accountingUser) {
-            $val = trim((string) Arr::get($accountingUser, $key));
-
-            return ! empty($val) ? $val : null;
-        };
-
-        $this->ensureConscriboIdIsUnique($user, $accountingUser['code']);
-
-        // Store ID
-        $user->conscribo_id = $accountingUser['code'];
-
-        // Update name
-        $user->first_name = $notEmptyGet('voornaam');
-        $user->insert = $notEmptyGet('tussenvoegsel');
-        $user->last_name = $notEmptyGet('naam');
-
-        // Update address
-        $firstLine = collect(['straat', 'huisnr', 'huisnr_toev'])
-            ->map(static fn ($line) => $notEmptyGet($line))
-            ->reject(static fn ($value) => empty($value))
-            ->implode(' ');
-
-        $newAddress = [
-            'line1' => $firstLine,
-            'line2' => null,
-            'postal_code' => $notEmptyGet('postcode'),
-            'city' => $notEmptyGet('plaats'),
-            'country' => 'nl',
-        ];
-
-        if ($user->address !== $newAddress) {
-            $user->address = $newAddress;
-        }
-
-        // Update phone number
-        $user->phone = $notEmptyGet('telefoonnummer');
-
-        // Save changes
+        $user->conscriboUser()->associate($conscriboUser);
+        $user->conscribo_id = $conscriboUser->conscribo_id;
         $user->save();
+
+        DB::transaction(fn () => $this->attachOrUpdateUser($user, $conscriboUser));
     }
 
-    /**
-     * Assigns roles to the user, as a transaction.
-     *
-     * @throws \InvalidArgumentException
-     */
-    private function assignRoles(User $user, array $accountingUser): void
+    private function detachUser(User $user)
     {
-        // Update roles
-        $roles = Role::whereIn('title', $accountingUser['groups'])->get();
-        $allowedRoles = $roles->pluck('name')->toArray();
+        $currentConscriboRoles = self::getRolesForConscriboUser($user->conscriboUser);
 
-        // Assign missing roles
-        $skippedRoles = [];
-        $addedRoles = [];
-        $presentRoles = [];
-        $removedRoles = [];
+        $user->conscriboUser()->dissociate();
+        $user->conscribo_id = null;
+        $user->save();
 
-        // Check current roles
-        foreach ($user->roles as $role) {
-            // Don't mutate reserved roles
-            if (in_array($role->name, self::RESERVED_ROLE, true)) {
-                $skippedRoles[] = $role->name;
+        $conscriboRoleIds = Role::query()->whereIn('name', $currentConscriboRoles)->pluck('id');
+        $user->roles()->detach($conscriboRoleIds);
 
-                continue;
-            }
+        Log::notice('User {email} has been detached from Conscribo. Removed roles: {roles}', [
+            'email' => $user->email,
+            'roles' => $currentConscriboRoles->values(),
+        ]);
+    }
 
-            // Check if in list
-            if (! in_array($role->name, $allowedRoles, true)) {
-                $removedRoles[] = $role->name;
-                Log::info('Removing role [{role}] from user.', [
-                    'role' => $role->name,
-                    'user' => $user->email,
-                ]);
-                $user->removeRole($role);
+    private function attachOrUpdateUser(User $user, ConscriboUser $conscriboUser)
+    {
+        $user->conscriboUser()->associate($conscriboUser);
+        $user->conscribo_id = $conscriboUser->conscribo_id;
+        $user->save();
 
-                continue;
-            }
+        $conscriboRoles = self::getRolesForConscriboUser($conscriboUser);
+        $user->assignRole($conscriboRoles);
 
-            // Add valid role to whitelist
-            $presentRoles[] = $role->name;
-        }
-
-        foreach ($roles as $role) {
-            // Already existing roles are skipped
-            if (in_array($role->name, $presentRoles, true)) {
-                continue;
-            }
-
-            // Add role
-            Log::info('Adding role [{role}] from user.', [
-                'role' => $role->name,
-                'user' => $user->email,
-            ]);
-            $user->assignRole($role);
-
-            // Add new role to list
-            $addedRoles[] = $role->name;
-        }
+        Log::notice('User {email} has been attached to Conscribo via {conscribo_id}. Assgined roles: {roles}', [
+            'email' => $user->email,
+            'conscribo_id' => $user->conscribo_id,
+            'roles' => $conscriboRoles->values(),
+        ]);
     }
 }
