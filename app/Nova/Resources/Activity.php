@@ -299,6 +299,9 @@ class Activity extends Resource
             Fields\Slug::make('Pad', 'slug')
                 ->from('name')
                 ->creationRules('unique:activities,slug')
+                ->updateRules([
+                    Rule::unique('activities', 'slug', fn ($query) => $query->whereNot('id', $this->id)),
+                ])
                 ->help('Het pad naar deze activiteit (/activiteiten/[pad])')
                 ->fillUsing(function ($request, $model, $attribute, $requestAttribute) {
                     $slug = $request->input($requestAttribute);
