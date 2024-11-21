@@ -99,8 +99,12 @@ class TransferEnrollment extends Command implements PromptsForMissingInput
             'user' => fn () => search(
                 label: 'What user must receive the enrollment:',
                 placeholder: 'E.g. Sam Smith',
-                options: fn ($value) => strlen($value) > 2
-                    ? User::where('name', 'like', "%{$value}%")->pluck('name', 'id')->all()
+                options: fn ($value) => strlen($value) > 0
+                    ? User::query()
+                        ->where('name', 'like', "%{$value}%")
+                        ->take(10)
+                        ->pluck('name', 'id')
+                        ->all()
                     : [],
             ),
             'reason' => fn () => text('What is the reason for the transfer?'),
