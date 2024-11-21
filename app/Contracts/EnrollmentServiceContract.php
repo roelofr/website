@@ -18,7 +18,7 @@ interface EnrollmentServiceContract
      * Returns the current active enrollment for this activity for the current
      * user. If no user is logged in, returns null.
      */
-    public function getEnrollment(Activity $activity): ?Enrollment;
+    public function getEnrollment(User $user, Activity $activity): ?Enrollment;
 
     /**
      * Returns a list of tickets available for the current user for the given
@@ -26,36 +26,36 @@ interface EnrollmentServiceContract
      *
      * @return Collection<Ticket>
      */
-    public function findTicketsForActivity(Activity $activity): Collection;
+    public function findTicketsForActivity(User $user, Activity $activity): Collection;
 
     /**
      * Checks if the user can enroll in this activity.  If no user is logged
      * in, a non-member user will be assumed.
      */
-    public function canEnroll(Activity $activity): bool;
+    public function canEnroll(User $user, Activity $activity): bool;
 
     /**
      * Enroll the user into the activity. Throw an error if it fails.
      * @throws EnrollmentFailedException
      */
-    public function createEnrollment(Activity $activity, Ticket $ticket): Enrollment;
+    public function createEnrollment(User $user, Activity $activity, Ticket $ticket): Enrollment;
 
     /**
      * Checks if the user can transfer their enrollment to this activity.
      */
-    public function canTransfer(Enrollment $enrollment): bool;
+    public function canTransfer(User $user, Enrollment $enrollment): bool;
 
     /**
      * Transfers an enrollment to the new user, sending proper mails and
      * invoicing jobs.
      */
-    public function transferEnrollment(Enrollment $enrollment, User $reciever): Enrollment;
+    public function transferEnrollment(User $user, Enrollment $enrollment, User $reciever): Enrollment;
 
     /**
      * Generates a new unique barcode code for the enrollment.
      * Should not run if the enrollment has a custom barcode.
      */
-    public function updateBarcode(Enrollment $enrollment): void;
+    public function updateBarcode(User $user, Enrollment $enrollment): void;
 
     /**
      * Generates an image for the barcode of the given enrollment, to be printed on the ticket.
@@ -64,5 +64,5 @@ interface EnrollmentServiceContract
      * @param int $size the size of the image, if a vector image is created
      * @return string The barcode as a base64 encoded image
      */
-    public function getBarcodeImage(Enrollment $enrollment, int $size = 128): string;
+    public function getBarcodeImage(User $user, Enrollment $enrollment, int $size = 128): string;
 }

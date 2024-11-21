@@ -10,9 +10,12 @@ use App\Models\Enrollment;
 use App\Models\Ticket;
 use App\Models\User;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Facade;
 
 /**
+ * Facade to access the EnrollmentService using the currently authenticated user.
+ *
  * @method static null|Enrollment getEnrollment(Activity $activity)
  * @method static Collection<Enrollment> findTicketsForActivity(Activity $activity)
  * @method static bool canEnroll(Activity $activity)
@@ -34,5 +37,10 @@ class Enroll extends Facade
     protected static function getFacadeAccessor()
     {
         return EnrollmentServiceContract::class;
+    }
+
+    public static function __callStatic($method, $args)
+    {
+        return parent::__callStatic($method, [Auth::user(), ...$args]);
     }
 }

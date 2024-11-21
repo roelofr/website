@@ -151,7 +151,7 @@ class Ticket extends Model
         return $this->is_being_sold
             && $this->quantity_available !== 0
             && $this->activity->available_seats !== 0
-            && (! $this->members_only || optional($user)->is_member);
+            && (! $this->members_only || $user?->is_member);
     }
 
     public function getEffectivelyAvailableFromAttribute(): ?Carbon

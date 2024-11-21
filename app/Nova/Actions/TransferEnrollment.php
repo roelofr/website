@@ -64,11 +64,11 @@ class TransferEnrollment extends Action
         }
 
         // Get transfer service
-        $service = \app(EnrollmentServiceContract::class);
-        \assert($service instanceof EnrollmentServiceContract);
+        /** @var EnrollmentServiceContract */
+        $service = app(EnrollmentServiceContract::class);
 
         // Done
-        $service->transferEnrollment($enrollment, $newUser);
+        $service->transferEnrollment($oldUser, $enrollment, $newUser);
     }
 
     /**

@@ -72,7 +72,6 @@ class EnrollmentServiceTest extends TestCase
     public static function provideEnrollmentVisibilityScopes(): array
     {
         return [
-            'anonymous' => [false, null],
             'guest' => [false, fn () => User::factory()->create()],
             'member' => [true, fn () => User::factory()->withRole('member')->create()],
         ];
@@ -89,41 +88,40 @@ class EnrollmentServiceTest extends TestCase
     public function test_get_enrollment(): void
     {
         $user = User::factory()->create();
-        $this->actingAs($user);
 
         $activity = Activity::factory()->hasTickets(1)->create();
         $ticket = $activity->tickets->first();
 
-        $this->assertNull($this->service->getEnrollment($activity));
+        $this->assertNull($this->service->getEnrollment($user, $activity));
 
         // Make dummy enrollment
         $enrollment = Enrollment::factory()->for($user)->for($ticket)->create();
 
         // Should now return
-        $this->assertNotNull($this->service->getEnrollment($activity));
-        $this->assertEquals($enrollment->id, $this->service->getEnrollment($activity)->id);
+        $this->assertNotNull($this->service->getEnrollment($user, $activity));
+        $this->assertEquals($enrollment->id, $this->service->getEnrollment($user, $activity)->id);
 
         // Should also return when seeded, confirmed, and paid
         $enrollment->state->transitionTo(States\Seeded::class);
         $enrollment->save();
 
-        $this->assertEquals($enrollment->id, $this->service->getEnrollment($activity)?->id);
+        $this->assertEquals($enrollment->id, $this->service->getEnrollment($user, $activity)?->id);
 
         $enrollment->state->transitionTo(States\Confirmed::class);
         $enrollment->save();
 
-        $this->assertEquals($enrollment->id, $this->service->getEnrollment($activity)?->id);
+        $this->assertEquals($enrollment->id, $this->service->getEnrollment($user, $activity)?->id);
 
         $enrollment->state->transitionTo(States\Paid::class);
         $enrollment->save();
 
-        $this->assertEquals($enrollment->id, $this->service->getEnrollment($activity)?->id);
+        $this->assertEquals($enrollment->id, $this->service->getEnrollment($user, $activity)?->id);
 
         // Cancel it, it should not return
         $enrollment->state->transitionTo(States\Cancelled::class);
         $enrollment->save();
 
-        $this->assertNull($this->service->getEnrollment($activity));
+        $this->assertNull($this->service->getEnrollment($user, $activity));
     }
 
     /**
@@ -132,6 +130,7 @@ class EnrollmentServiceTest extends TestCase
     public function test_enrollment_timeframes_are_properly_handled(array $activityProps, array $ticketProps, bool $canEnroll): void
     {
         Date::setTestNow('2023-06-10T00:00:00Z');
+        $user = User::factory()->create();
 
         $activity = Activity::factory()->create($activityProps);
         Ticket::factory()->for($activity)->create($ticketProps);
@@ -139,16 +138,16 @@ class EnrollmentServiceTest extends TestCase
         // Factories don't update the activity, so we need to refresh its
         $activity = Activity::with('tickets')->find($activity->id);
 
-        $this->actingAs(User::factory()->create());
-
-        $this->assertEquals($canEnroll, $this->service->canEnroll($activity));
+        $this->assertEquals($canEnroll, $this->service->canEnroll($user, $activity));
     }
 
     /**
      * @dataProvider provideEnrollmentVisibilityScopes
      */
-    public function test_enrollment_visibility_scoping(bool $buyPrivate, ?Closure $user): void
+    public function test_enrollment_visibility_scoping(bool $buyPrivate, Closure $userClosure): void
     {
+        $user = value($userClosure);
+
         $futureDate = Date::now()->addDay();
         $pastDate = Date::now()->subDay();
 
@@ -158,63 +157,61 @@ class EnrollmentServiceTest extends TestCase
         $publicTicket->update(['is_public' => true]);
         $privateTicket->update(['is_public' => false]);
 
-        if ($user) {
-            $this->actingAs(value($user));
-        }
-
         // No tickets
-        $this->assertEquals(false, $this->service->canEnroll($activity), 'Assert nobody can buy tickets when none are on sale');
+        $this->assertEquals(false, $this->service->canEnroll($user, $activity), 'Assert nobody can buy tickets when none are on sale');
 
         // Add a private ticket
         $privateTicket->update(['available_from' => $pastDate]);
-        $this->assertEquals($buyPrivate, $this->service->canEnroll($activity), 'Assert members can buy private tickets when available');
+        $this->assertEquals($buyPrivate, $this->service->canEnroll($user, $activity), 'Assert members can buy private tickets when available');
 
         // Add a public ticket
         $publicTicket->update(['available_from' => $pastDate]);
-        $this->assertEquals(true, $this->service->canEnroll($activity), 'Assert anyone can buy public tickets when both are available');
+        $this->assertEquals(true, $this->service->canEnroll($user, $activity), 'Assert anyone can buy public tickets when both are available');
 
         // Take private ticket out of sale
         $privateTicket->update(['available_from' => $futureDate]);
-        $this->assertEquals(true, $this->service->canEnroll($activity), 'Assert anyone can buy public tickets when only public tickets available');
+        $this->assertEquals(true, $this->service->canEnroll($user, $activity), 'Assert anyone can buy public tickets when only public tickets available');
 
         // Close the enrollment, which should terminate all ticket sales.
         $activity->update(['enrollment_start' => $futureDate]);
 
-        $this->assertEquals(false, $this->service->canEnroll($activity), 'Assert nobody can buy tickets before enrollment starts');
+        $this->assertEquals(false, $this->service->canEnroll($user, $activity), 'Assert nobody can buy tickets before enrollment starts');
     }
 
     public function test_ticket_quanity(): void
     {
-        $this->actingAs(User::factory()->create());
+        $user = (User::factory()->create());
 
         $activity = Activity::factory()->hasTickets(1, ['quantity' => 2])->create();
         $ticket = $activity->tickets->first();
 
         // Should have two seats left
-        $this->assertTrue($this->service->canEnroll($activity));
+        $this->assertTrue($this->service->canEnroll($user, $activity));
 
         // Occupy both seats
         [$enrollment] = Enrollment::factory(2)->forUser()->for($ticket)->create(['state' => States\Confirmed::class]);
 
         // Should no longer have room
-        $this->assertFalse($this->service->canEnroll($activity));
+        $this->assertFalse($this->service->canEnroll($user, $activity));
 
         // Cancel one of the enrollments
         $enrollment->state->transitionTo(States\Cancelled::class);
         $enrollment->save();
 
         // Should have room again
-        $this->assertTrue($this->service->canEnroll($activity));
+        $this->assertTrue($this->service->canEnroll($user, $activity));
 
         // Set activity seat limit to 1
         $activity->update(['seats' => 1]);
 
         // Should be full again
-        $this->assertFalse($this->service->canEnroll($activity));
+        $this->assertFalse($this->service->canEnroll($user, $activity));
     }
 
     public function test_public_with_infinite_seats(): void
     {
+        $user = User::factory()->create();
+
         $activity = Activity::factory()->create([
             'is_public' => true,
         ]);
@@ -225,27 +222,27 @@ class EnrollmentServiceTest extends TestCase
         ]);
 
         // Guest
-        $this->assertTrue($this->service->canEnroll($activity));
+        $this->assertTrue($this->service->canEnroll($user, $activity));
 
-        $ticketOptions = $this->service->findTicketsForActivity($activity);
+        $ticketOptions = $this->service->findTicketsForActivity($user, $activity);
         $this->assertCount(1, $ticketOptions);
         $this->assertTrue($ticket->is($ticketOptions[0]));
 
         // Logged in user
-        $this->actingAs($this->getGuestUser());
+        $user = ($this->getGuestUser());
 
-        $this->assertTrue($this->service->canEnroll($activity));
+        $this->assertTrue($this->service->canEnroll($user, $activity));
 
-        $ticketOptions = $this->service->findTicketsForActivity($activity);
+        $ticketOptions = $this->service->findTicketsForActivity($user, $activity);
         $this->assertCount(1, $ticketOptions);
         $this->assertTrue($ticket->is($ticketOptions[0]));
 
         // Logged in member
-        $this->actingAs($this->getMemberUser());
+        $user = ($this->getMemberUser());
 
-        $this->assertTrue($this->service->canEnroll($activity));
+        $this->assertTrue($this->service->canEnroll($user, $activity));
 
-        $ticketOptions = $this->service->findTicketsForActivity($activity);
+        $ticketOptions = $this->service->findTicketsForActivity($user, $activity);
         $this->assertCount(1, $ticketOptions);
         $this->assertTrue($ticket->is($ticketOptions[0]));
     }
@@ -261,15 +258,11 @@ class EnrollmentServiceTest extends TestCase
             'is_public' => false,
         ]);
 
-        $this->assertFalse($this->service->canEnroll($activity));
+        $guestUser = $this->getGuestUser();
+        $this->assertFalse($this->service->canEnroll($guestUser, $activity));
 
-        $this->actingAs($this->getGuestUser());
-
-        $this->assertFalse($this->service->canEnroll($activity));
-
-        $this->actingAs($this->getMemberUser());
-
-        $this->assertTrue($this->service->canEnroll($activity));
+        $memberUser = $this->getMemberUser();
+        $this->assertTrue($this->service->canEnroll($memberUser, $activity));
     }
 
     public function test_private_enrollment(): void
@@ -285,15 +278,11 @@ class EnrollmentServiceTest extends TestCase
 
         Auth::logout();
 
-        $this->assertFalse($this->service->canEnroll($activity), 'Failed asserting guests cannot enroll');
+        $guestUser = $this->getGuestUser();
+        $memberUser = $this->getMemberUser();
 
-        $this->actingAs($this->getGuestUser());
-
-        $this->assertFalse($this->service->canEnroll($activity), 'Failed asserting non-members cannot enroll');
-
-        $this->actingAs($this->getMemberUser());
-
-        $this->assertTrue($this->service->canEnroll($activity), 'Failed asserting members can enroll');
+        $this->assertFalse($this->service->canEnroll($guestUser, $activity), 'Failed asserting non-members cannot enroll');
+        $this->assertTrue($this->service->canEnroll($memberUser, $activity), 'Failed asserting members can enroll');
     }
 
     public function test_activity_with_limited_seats(): void
@@ -302,19 +291,19 @@ class EnrollmentServiceTest extends TestCase
             'seats' => 1,
         ]);
 
-        $this->actingAs($user1 = User::factory()->create());
-        $this->assertTrue($this->service->canEnroll($activity));
+        $user1 = User::factory()->create();
+        $this->assertTrue($this->service->canEnroll($user1, $activity));
 
-        $this->assertInstanceOf(Enrollment::class, $this->service->createEnrollment($activity, $activity->tickets()->first()));
+        $this->assertInstanceOf(Enrollment::class, $this->service->createEnrollment($user1, $activity, $activity->tickets()->first()));
 
         $this->assertCount(1, $user1->enrollments()->get());
 
         // Check user2 cannot enroll
-        $this->actingAs(User::factory()->create());
-        $this->assertFalse($this->service->canEnroll($activity));
+        $user2 = User::factory()->create();
+        $this->assertFalse($this->service->canEnroll($user2, $activity));
 
         $this->expectException(EnrollmentFailedException::class);
-        $this->service->createEnrollment($activity, $activity->tickets()->first());
+        $this->service->createEnrollment($user2, $activity, $activity->tickets()->first());
     }
 
     /**
@@ -325,17 +314,17 @@ class EnrollmentServiceTest extends TestCase
         $activity = Activity::factory()->withTickets()->create();
         $ticket = $activity->tickets->first();
 
-        $this->actingAs($user = User::factory()->create());
+        $user = User::factory()->create();
 
-        $this->assertTrue($this->service->canEnroll($activity));
-        $this->assertInstanceOf(Enrollment::class, $this->service->createEnrollment($activity, $ticket));
+        $this->assertTrue($this->service->canEnroll($user, $activity));
+        $this->assertInstanceOf(Enrollment::class, $this->service->createEnrollment($user, $activity, $ticket));
 
         $this->assertCount(1, $user->enrollments()->get());
 
-        $this->assertFalse($this->service->canEnroll($activity));
+        $this->assertFalse($this->service->canEnroll($user, $activity));
 
         $this->expectException(EnrollmentFailedException::class);
-        $this->service->createEnrollment($activity, $ticket);
+        $this->service->createEnrollment($user, $activity, $ticket);
     }
 
     /**
@@ -347,13 +336,12 @@ class EnrollmentServiceTest extends TestCase
         $ticket = $activity->tickets->first();
 
         $user = User::factory()->create();
-        $this->actingAs($user);
 
         // make enrollment
-        $enrollment = $this->service->createEnrollment($activity, $ticket);
+        $enrollment = $this->service->createEnrollment($user, $activity, $ticket);
 
         // Should pass without token
-        $this->assertTrue($this->service->canTransfer($enrollment), 'Failed asserting the enrollment accepts transfers');
+        $this->assertTrue($this->service->canTransfer($user, $enrollment), 'Failed asserting the enrollment accepts transfers');
 
         // Add transfer code
         $enrollment->transfer_secret = Str::random(32);
@@ -361,7 +349,7 @@ class EnrollmentServiceTest extends TestCase
 
         // Transfer to self
         $this->expectException(LogicException::class);
-        $this->service->transferEnrollment($enrollment, $user);
+        $this->service->transferEnrollment($user, $enrollment, $user);
     }
 
     public function test_transfer_cancelled_and_trashed(): void
@@ -369,17 +357,17 @@ class EnrollmentServiceTest extends TestCase
         $activity = Activity::factory()->withTickets()->create();
         $ticket = $activity->tickets->first();
 
-        $this->actingAs(User::factory()->create());
+        $user = User::factory()->create();
 
         // Check the user can enroll
-        $this->assertTrue($this->service->canEnroll($activity), 'Failed asserting the user can enroll into the activity');
+        $this->assertTrue($this->service->canEnroll($user, $activity), 'Failed asserting the user can enroll into the activity');
 
         // Enroll user
-        $enrollment = $this->service->createEnrollment($activity, $ticket);
+        $enrollment = $this->service->createEnrollment($user, $activity, $ticket);
         $this->assertInstanceOf(Enrollment::class, $enrollment, 'Failed asserting the enrollment was created');
 
         // Check the enrollment can transfer
-        $this->assertTrue($this->service->canTransfer($enrollment), 'Failed asserting the enrollment can be transferred');
+        $this->assertTrue($this->service->canTransfer($user, $enrollment), 'Failed asserting the enrollment can be transferred');
 
         // Cancel enrollment
         $this->assertTrue($enrollment->state->canTransitionTo(States\Cancelled::class), 'Failed asserting the enrollment can be cancelled');
@@ -387,21 +375,21 @@ class EnrollmentServiceTest extends TestCase
 
         // Check the enrollment can't transfer anymore
         $this->assertTrue($enrollment->state instanceof States\Cancelled);
-        $this->assertFalse($this->service->canTransfer($enrollment), 'Failed asserting a cancelled enrollment cannot be transferred');
+        $this->assertFalse($this->service->canTransfer($user, $enrollment), 'Failed asserting a cancelled enrollment cannot be transferred');
 
         // Re-enroll
-        $this->assertTrue($this->service->canEnroll($activity), 'Failed asserting the user can re-enroll into the activity');
-        $enrollment2 = $this->service->createEnrollment($activity, $ticket);
+        $this->assertTrue($this->service->canEnroll($user, $activity), 'Failed asserting the user can re-enroll into the activity');
+        $enrollment2 = $this->service->createEnrollment($user, $activity, $ticket);
         $this->assertInstanceOf(Enrollment::class, $enrollment2, 'Failed asserting the enrollment was created');
 
         // Check the enrollment can transfer again
-        $this->assertTrue($this->service->canTransfer($enrollment2), 'Failed asserting the enrollment can be transferred');
+        $this->assertTrue($this->service->canTransfer($user, $enrollment2), 'Failed asserting the enrollment can be transferred');
 
         // Soft-delete the enrollment
         $enrollment2->delete();
 
         // Check the enrollment can't transfer anymore
-        $this->assertFalse($this->service->canTransfer($enrollment2), 'Failed asserting the enrollment cannot be transferred after being deleted');
+        $this->assertFalse($this->service->canTransfer($user, $enrollment2), 'Failed asserting the enrollment cannot be transferred after being deleted');
 
         // Ensure we've been using two separate objects
         $this->assertFalse($enrollment->is($enrollment2), 'Failed asserting the two enrollments are different');
@@ -417,13 +405,12 @@ class EnrollmentServiceTest extends TestCase
 
         $user1 = User::factory()->create();
         $user2 = User::factory()->create();
-        $this->actingAs($user1);
 
         // make enrollment
-        $enrollment = $this->service->createEnrollment($activity, $ticket);
+        $enrollment = $this->service->createEnrollment($user1, $activity, $ticket);
 
         // Should pass without token
-        $this->assertTrue($this->service->canTransfer($enrollment), 'Failed asserting the enrollment accepts transfers');
+        $this->assertTrue($this->service->canTransfer($user1, $enrollment), 'Failed asserting the enrollment accepts transfers');
 
         // Check counts
         $this->assertCount(1, $user1->enrollments()->get());
@@ -434,7 +421,7 @@ class EnrollmentServiceTest extends TestCase
         $enrollment->save();
 
         // Transfer to self
-        $enrollment2 = $this->service->transferEnrollment($enrollment, $user2);
+        $enrollment2 = $this->service->transferEnrollment($user1, $enrollment, $user2);
         $this->assertTrue($enrollment2->is($enrollment), 'Failed asserting the same enrollment was returned');
 
         // Refresh
@@ -446,7 +433,7 @@ class EnrollmentServiceTest extends TestCase
         $this->assertCount(1, $user2->enrollments()->get());
 
         // Test enrollment remains transferrable
-        $this->assertTrue($this->service->canTransfer($enrollment), 'Failed asserting the enrollment accepts transfers after a transfer');
+        $this->assertTrue($this->service->canTransfer($user1, $enrollment), 'Failed asserting the enrollment accepts transfers after a transfer');
 
         // Test it loses its transfer code
         $this->assertNull($enrollment->transfer_secret, 'Failed asserting the enrollment transfer code is wiped after handover');
@@ -466,14 +453,14 @@ class EnrollmentServiceTest extends TestCase
         $enrollment->transfer_secret = Str::random(32);
         $enrollment->save();
 
-        $this->assertTrue($this->service->canTransfer($enrollment), 'Failed asserting the enrollment can be transferred');
+        $this->assertTrue($this->service->canTransfer($user1, $enrollment), 'Failed asserting the enrollment can be transferred');
         $this->assertNotNull($enrollment->expire, 'Failed asserting that the enrollment was assigned expiry');
 
         $beforeExpiration = $enrollment->expire;
 
         Date::setTestNow(Date::now()->addMinutes(35));
 
-        $this->service->transferEnrollment($enrollment, $user2);
+        $this->service->transferEnrollment($user1, $enrollment, $user2);
 
         $enrollment->refresh();
 
@@ -500,7 +487,7 @@ class EnrollmentServiceTest extends TestCase
 
         $this->assertTrue($user1->is($enrollment->user), 'Failed assserting user1 is the owner');
 
-        $this->service->transferEnrollment($enrollment, $user2);
+        $this->service->transferEnrollment($user1, $enrollment, $user2);
 
         $enrollment->refresh();
 
@@ -516,6 +503,7 @@ class EnrollmentServiceTest extends TestCase
      */
     public function test_transfer_ability(): void
     {
+        $user = User::factory()->create();
         $activity = Activity::factory()->withTickets()->create();
         $ticket = $activity->tickets->first();
 
@@ -538,18 +526,18 @@ class EnrollmentServiceTest extends TestCase
         ]);
         $trashedEnrollment->delete();
 
-        $this->assertTrue($this->service->canTransfer($validEnrollment), 'Failed asserting a confirmed, clean enrollment can be transferred');
-        $this->assertTrue($this->service->canTransfer($createdEnrollment), 'Failed asserting a created enrollment cannot be transferred');
-        $this->assertFalse($this->service->canTransfer($cancelledEnrollment), 'Failed asserting a cancelled enrollment cannot be transferred');
-        $this->assertFalse($this->service->canTransfer($consumedEnrollment), 'Failed asserting a consumed enrollment cannot be transferred');
-        $this->assertFalse($this->service->canTransfer($trashedEnrollment), 'Failed asserting a trashed enrollment cannot be transferred');
+        $this->assertTrue($this->service->canTransfer($user, $validEnrollment), 'Failed asserting a confirmed, clean enrollment can be transferred');
+        $this->assertTrue($this->service->canTransfer($user, $createdEnrollment), 'Failed asserting a created enrollment cannot be transferred');
+        $this->assertFalse($this->service->canTransfer($user, $cancelledEnrollment), 'Failed asserting a cancelled enrollment cannot be transferred');
+        $this->assertFalse($this->service->canTransfer($user, $consumedEnrollment), 'Failed asserting a consumed enrollment cannot be transferred');
+        $this->assertFalse($this->service->canTransfer($user, $trashedEnrollment), 'Failed asserting a trashed enrollment cannot be transferred');
 
         $activity->start_date = Date::now()->subHour();
         $activity->end_date = Date::now()->addHour();
         $activity->save();
 
-        $this->assertFalse($this->service->canTransfer($validEnrollment->fresh()), 'Failed asserting a confirmed, cleanenrollment cannot be transferred after event start');
-        $this->assertFalse($this->service->canTransfer($createdEnrollment->fresh()), 'Failed asserting a created enrollment cannot be transferred after event start');
+        $this->assertFalse($this->service->canTransfer($user, $validEnrollment->fresh()), 'Failed asserting a confirmed, cleanenrollment cannot be transferred after event start');
+        $this->assertFalse($this->service->canTransfer($user, $createdEnrollment->fresh()), 'Failed asserting a created enrollment cannot be transferred after event start');
     }
 
     public function test_can_enroll_failure_cases(): void
@@ -585,14 +573,11 @@ class EnrollmentServiceTest extends TestCase
         $ticket = $activity->tickets->first();
 
         // Create enrollment under user1
-        $this->actingAs($user1);
-        $this->assertInstanceOf(Enrollment::class, $enrollment = $this->service->createEnrollment($activity, $ticket));
+        $this->assertInstanceOf(Enrollment::class, $enrollment = $this->service->createEnrollment($user1, $activity, $ticket));
 
         // Created, switch to user2
-        $this->actingAs($user2);
-
-        $this->assertTrue($this->service->canEnroll($activity), 'Failed asserting users can enroll before start');
-        $this->assertTrue($this->service->canTransfer($enrollment), 'Failed asserting users can transfer before start');
+        $this->assertTrue($this->service->canEnroll($user2, $activity), 'Failed asserting users can enroll before start');
+        $this->assertTrue($this->service->canTransfer($user2, $enrollment), 'Failed asserting users can transfer before start');
 
         $activity->forceFill([
             'start_date' => Date::now()->subDay(),
@@ -600,8 +585,8 @@ class EnrollmentServiceTest extends TestCase
         ])->save();
         $enrollment->refresh();
 
-        $this->assertTrue($this->service->canEnroll($activity), 'Failed asserting users can enroll after start');
-        $this->assertFalse($this->service->canTransfer($enrollment), 'Failed asserting users cannot transfer after start');
+        $this->assertTrue($this->service->canEnroll($user2, $activity), 'Failed asserting users can enroll after start');
+        $this->assertFalse($this->service->canTransfer($user2, $enrollment), 'Failed asserting users cannot transfer after start');
 
         $activity->forceFill([
             'start_date' => Date::now()->subDay(),
@@ -609,7 +594,7 @@ class EnrollmentServiceTest extends TestCase
         ])->save();
         $enrollment->refresh();
 
-        $this->assertFalse($this->service->canEnroll($activity), 'Failed asserting users cannot enroll after end');
-        $this->assertFalse($this->service->canTransfer($enrollment), 'Failed asserting users cannot transfer after end');
+        $this->assertFalse($this->service->canEnroll($user2, $activity), 'Failed asserting users cannot enroll after end');
+        $this->assertFalse($this->service->canTransfer($user2, $enrollment), 'Failed asserting users cannot transfer after end');
     }
 }

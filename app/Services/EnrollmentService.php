@@ -29,12 +29,8 @@ class EnrollmentService implements EnrollmentServiceContract
         // intentionally left blank
     }
 
-    public function getEnrollment(Activity $activity): ?Enrollment
+    public function getEnrollment(User $user, Activity $activity): ?Enrollment
     {
-        if (! $user = Auth::user()) {
-            return null;
-        }
-
         return $user
             ->enrollments()
             ->whereNotState('state', [
@@ -44,10 +40,10 @@ class EnrollmentService implements EnrollmentServiceContract
             ->first();
     }
 
-    public function canEnroll(Activity $activity): bool
+    public function canEnroll(User $user, Activity $activity): bool
     {
         // Check if the user is already enrolled
-        if ($this->getEnrollment($activity) !== null) {
+        if ($this->getEnrollment($user, $activity) !== null) {
             return false;
         }
 
@@ -67,7 +63,7 @@ class EnrollmentService implements EnrollmentServiceContract
         }
 
         // Check if there are any tickets left that this user can buy
-        $tickets = $this->findTicketsForActivity($activity);
+        $tickets = $this->findTicketsForActivity($user, $activity);
         if ($tickets->isEmpty()) {
             return false;
         }
@@ -76,11 +72,9 @@ class EnrollmentService implements EnrollmentServiceContract
         return true;
     }
 
-    public function findTicketsForActivity(Activity $activity): Collection
+    public function findTicketsForActivity(User $user, Activity $activity): Collection
     {
         $activity->loadMissing('tickets');
-
-        $user = Auth::user();
 
         /** @var Ticket $ticket */
         return $activity->tickets
@@ -88,11 +82,11 @@ class EnrollmentService implements EnrollmentServiceContract
             ->values();
     }
 
-    public function createEnrollment(Activity $activity, Ticket $ticket): Enrollment
+    public function createEnrollment(User $user, Activity $activity, Ticket $ticket): Enrollment
     {
         throw_unless($user = Auth::user(), new LogicException('There is no user logged in'));
 
-        throw_if($this->getEnrollment($activity), new EnrollmentFailedException("You're already enrolled for this activity"));
+        throw_if($this->getEnrollment($user, $activity), new EnrollmentFailedException("You're already enrolled for this activity"));
 
         throw_unless($ticket->isAvailableFor($user), new EnrollmentFailedException('This ticket is not available'));
 
@@ -102,7 +96,7 @@ class EnrollmentService implements EnrollmentServiceContract
 
         throw_if($ticket->activity->refresh()->available_seats === 0, new EnrollmentFailedException('This activity is sold out'));
 
-        throw_unless($this->canEnroll($activity), new EnrollmentFailedException('You cannot enroll for this activity'));
+        throw_unless($this->canEnroll($user, $activity), new EnrollmentFailedException('You cannot enroll for this activity'));
 
         /** @var Enrollment $enrollment */
         $enrollment = $activity->enrollments()->make();
@@ -121,7 +115,7 @@ class EnrollmentService implements EnrollmentServiceContract
         return $enrollment;
     }
 
-    public function canTransfer(Enrollment $enrollment): bool
+    public function canTransfer(User $user, Enrollment $enrollment): bool
     {
         if ($enrollment->state instanceof States\Cancelled || $enrollment->trashed() || $enrollment->consumed()) {
             return false;
@@ -135,11 +129,10 @@ class EnrollmentService implements EnrollmentServiceContract
         return true;
     }
 
-    public function transferEnrollment(Enrollment $enrollment, User $reciever): Enrollment
+    public function transferEnrollment(User $user, Enrollment $enrollment, User $reciever): Enrollment
     {
         // Get current
         $giver = $enrollment->user;
-        \assert($giver instanceof User);
 
         // Sanity check
         if ($reciever->is($giver)) {
@@ -176,7 +169,7 @@ class EnrollmentService implements EnrollmentServiceContract
     /**
      * Generates a new unique barcode code for the enrollment.
      */
-    public function updateBarcode(Enrollment $enrollment): void
+    public function updateBarcode(User $user, Enrollment $enrollment): void
     {
         if ($enrollment->barcode_generated === false) {
             return;
@@ -198,7 +191,7 @@ class EnrollmentService implements EnrollmentServiceContract
         throw new RuntimeException('Could not generate a unique ticket code');
     }
 
-    public function getBarcodeImage(Enrollment $enrollment, int $size = 128): string
+    public function getBarcodeImage(User $user, Enrollment $enrollment, int $size = 128): string
     {
         return App::make(BarcodeService::class)->toBase64($enrollment->barcode_type ?? BarcodeType::QRCODE, $enrollment->barcode, $size);
     }
