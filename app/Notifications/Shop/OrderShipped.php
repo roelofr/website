@@ -9,18 +9,6 @@ use Illuminate\Notifications\Messages\MailMessage;
 class OrderShipped extends ShopNotification
 {
     /**
-     * Get the notification's delivery channels.
-     *
-     * @return array
-     */
-    public function via($notifiable)
-    {
-        return [
-            'mail',
-        ];
-    }
-
-    /**
      * Get the mail representation of the notification.
      *
      * @return \Illuminate\Notifications\Messages\MailMessage
@@ -32,18 +20,13 @@ class OrderShipped extends ShopNotification
 
         return (new MailMessage())
             ->subject("Bestelling {$order->number} afgerond")
-
             ->greeting("Beste {$notifiable->first_name},")
-
             ->line("Bij deze even een bevestiging dat je bestelling van {$date} (bestelnummer {$order->number}) is afgerond.")
-
             ->line('Mochten er nog problemen zijn met je aankoop, neem dan contact op met het bestuur.')
-
             ->action(
                 'Bekijk bestelling',
                 route('shop.order.show', $order),
             )
-
             ->salutation('Tot snel!');
     }
 }

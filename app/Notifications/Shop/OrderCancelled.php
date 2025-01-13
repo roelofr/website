@@ -9,18 +9,6 @@ use Illuminate\Notifications\Messages\MailMessage;
 class OrderCancelled extends ShopNotification
 {
     /**
-     * Get the notification's delivery channels.
-     *
-     * @return array
-     */
-    public function via($notifiable)
-    {
-        return [
-            'mail',
-        ];
-    }
-
-    /**
      * Get the mail representation of the notification.
      *
      * @return \Illuminate\Notifications\Messages\MailMessage
@@ -32,18 +20,13 @@ class OrderCancelled extends ShopNotification
 
         return (new MailMessage())
             ->subject("Bestelling {$order->number} geannuleerd")
-
             ->greeting("Beste {$notifiable->first_name},")
-
             ->line("Je bestelling van {$date} (bestelnummer {$order->number}) is geannuleerd.")
-
             ->line('Als je toch de producten wil kopen, kan je hieronder de bestelling bekijken ter referentie.')
-
             ->action(
                 'Bekijk bestelling',
                 route('shop.order.show', $order),
             )
-
             ->salutation('Tot snel!');
     }
 }
